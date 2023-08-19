@@ -1,0 +1,458 @@
+#pragma kernel BoundingBoxRayChecker
+
+RWStructuredBuffer<matrix> DebugData;
+RWStructuredBuffer<int> IgnoreOccluderIndex;
+int ignoreOccluderCount;
+
+
+int BitSeparateFor3(int n)
+{
+    int s = n;
+    s = (s | s << 8) & 0x0000f00f;
+    s = (s | s << 4) & 0x000c30c3;
+    s = (s | s << 2) & 0x00249249;
+    return s;
+}
+
+int Calculateint3PositionToMortonIndex(int3 pos)
+{
+    return BitSeparateFor3(pos.x) | (BitSeparateFor3(pos.y) << 1) | (BitSeparateFor3(pos.z) << 2);
+}
+
+float3 IsCollision(float3 rayDir, float3 rayFromPos, float3 aabbLeftPos, float3 aabbRightPos)
+{
+    float tMin = -100000000.0f;
+    float tMax = 100000000.0f;
+
+    int backCount = 0;
+
+    for (int i = 0; i < 3; i++)
+    {
+        float invDir = 1.0f / rayDir[i];
+
+        float leftPos = (aabbLeftPos[i] - rayFromPos[i]) * invDir;
+        float rightPos = (aabbRightPos[i] - rayFromPos[i]) * invDir;
+
+        //レイの開始位置が後ろにある場合
+        if (leftPos < 0 || rightPos < 0)
+        {
+            backCount++;
+        }
+
+        if (invDir < 0.0f)
+        {
+            float temp = leftPos;
+            leftPos = rightPos;
+            rightPos = temp;
+        }
+
+        tMin = max(tMin, leftPos);
+        tMax = min(tMax, rightPos);
+
+        if (tMax <= tMin)
+        {
+            return float3(-1, -1, -1);
+        }
+    }
+
+    if (backCount == 3)
+    {
+        return float3(-1, -1, -1);
+    }
+
+    return rayFromPos + rayDir * tMin;
+}
+
+void OccludeCollisionCheck(int spaceIndex, float occluderHitSqrMagnitude,RWStructuredBuffer<float4> occludeBoundingBox, RWStructuredBuffer<int> occludeResult,float3 startRayMortonSpacePosition, float3 rayDirection)
+{
+    int startIndex = (int)occludeBoundingBox[spaceIndex].y;
+    int spaceVoxelCount = (int)occludeBoundingBox[spaceIndex].z;
+
+    //その空間に属するOccludeの要素数分ループする
+    for (int i = startIndex; i < startIndex + spaceVoxelCount; i += 2)
+    {
+        //aabbのそれぞれの座標を求める
+        float3 minBoundingBox = occludeBoundingBox[i];
+        float3 maxBoundingBox = occludeBoundingBox[i + 1];
+
+        //衝突判定を実施する
+        float3 hitPos = IsCollision(rayDirection, startRayMortonSpacePosition, minBoundingBox, maxBoundingBox);
+        if (hitPos.x < -0.5) continue;
+
+        float3 boxfloat = hitPos - startRayMortonSpacePosition;
+        float distance = boxfloat.x * boxfloat.x + boxfloat.y * boxfloat.y + boxfloat.z * boxfloat.z;
+
+        //ヒットした座標がOccluderのヒット座標よりも遠い場合はOccluderよりも遠いので無視する
+        if (occluderHitSqrMagnitude < distance) continue;
+
+        //手前にOccludeがあるので、ヒットしたと判定する
+        int occludeIndex = (int)occludeBoundingBox[i].w;
+        occludeResult[occludeIndex] = 1;
+    }
+}
+
+/// <summary>
+/// その空間にあるバウンディングボックスと衝突判定をする
+/// </summary>
+/// <returns></returns>
+int OccluderCollisionCheck(int spaceIndex, RWStructuredBuffer<float4> occluderBoundingBox, float3 startRayMortonSpacePosition,float3 rayDirection, RWStructuredBuffer<float4> occludeBoundingBox, RWStructuredBuffer<int> occludeResult,int threadIndex)
+{
+    //衝突したAABBと原点の距離をもめて最も小さいものを採用する
+    float minCenterSqrMagnitude = 100000000.0f;
+    int resultIndex = -1;
+
+
+    int startIndex = (int)occluderBoundingBox[spaceIndex].y;
+    int spaceVoxelCount = (int)occluderBoundingBox[spaceIndex].z;
+
+    //その空間に属するOccluderの要素数分ループする
+    for (int i = startIndex; i < startIndex + spaceVoxelCount; i += 2)
+    {
+        //aabbのそれぞれの座標を求める
+        float3 minBoundingBox = occluderBoundingBox[i];
+        float3 maxBoundingBox = occluderBoundingBox[i + 1];
+
+        //衝突判定を実施する
+        float3 hitPos = IsCollision(rayDirection, startRayMortonSpacePosition, minBoundingBox, maxBoundingBox);
+        if (hitPos.x < -0.5) continue;
+
+        float3 boxfloat = hitPos - startRayMortonSpacePosition;
+        float distance = boxfloat.x * boxfloat.x + boxfloat.y * boxfloat.y + boxfloat.z * boxfloat.z;
+        if (distance < minCenterSqrMagnitude)
+        {
+            //無視インデックスにあるかどうかをチェックする
+            const int tempHit = (int)occluderBoundingBox[i].w;
+            bool isIgnore = false;
+
+            for (int j = 0; j < ignoreOccluderCount; j++)
+            {
+                if (tempHit == IgnoreOccluderIndex[j])
+                {
+                    isIgnore = true;
+                    break;
+                }
+            }
+            if (isIgnore)
+            {
+                break;
+            }
+            
+            
+            minCenterSqrMagnitude = distance;
+            resultIndex = tempHit;
+            DebugData[threadIndex] = matrix(
+                float4(hitPos,0),
+                float4(0,0,0,0),
+                float4(0,0,0,0),
+                float4(0,0,0,0));
+        }
+    }
+
+    //Occluderの判定結果をもとにOccludeの判定を行う
+    OccludeCollisionCheck(spaceIndex, minCenterSqrMagnitude, occludeBoundingBox, occludeResult,startRayMortonSpacePosition, rayDirection);
+
+    return resultIndex;
+}
+
+/// <summary>
+/// 角度がマイナスだった時のために開始地点を補正する
+/// </summary>
+/// <returns></returns>
+float CalcInvertMortonSpacePosition(int cellPos, float cellSize, float startPos)
+{
+    return cellPos * cellSize + ((cellPos + 1) * cellSize - startPos);
+}
+
+
+/// <summary>
+/// チェックした空間のリストと衝突したボクセルを返す
+/// </summary>
+/// <returns>モートン空間のインデックのバウンディングボックス</returns>
+int GetHitIndex(float3 startPosition, float3 direction, float3 spaceOriginPosition,float3 spaceRange, int spaceSplitNum, RWStructuredBuffer<float4> occluderBoundingBox,RWStructuredBuffer<float4> occludeBoundingBox, RWStructuredBuffer<int> occludeResult,int threadIndex)
+{
+    direction = normalize(direction);
+
+    //rayがプラス方向かマイナス方向かをもとに現在のポジションを設定する
+    int3 rayMortonForward = int3(0 <= direction.x? 1 : -1, 0 <= direction.y? 1 : -1,0 <= direction.z? 1 : -1);
+
+    //directionを一旦すべて正の値にする
+    float3 plusDirection = float3(abs(direction.x),abs(direction.y), abs(direction.z));
+
+
+    //空間の分割数
+    int mortonCellNum = (int)pow(2, spaceSplitNum);
+    int3 mortonSpaceRange = int3(mortonCellNum, mortonCellNum, mortonCellNum);
+    //最大レベルのモートン空間（モートンセル）の大きさ
+    float3 mortonCellSize = spaceRange / mortonCellNum;
+
+    //Unity座標系をボクセル空間座標系に変換
+    //プラス方向の時の開始地点をモートン空間系の座標に変換する
+    float3 startRayMortonSpacePosition = startPosition - spaceOriginPosition;
+
+    //開始地点の座標を追加する
+    int3 startRayMortonCellPos = int3(
+        floor(startRayMortonSpacePosition.x/ mortonCellSize.x),
+        floor(startRayMortonSpacePosition.y / mortonCellSize.y),
+        floor(startRayMortonSpacePosition.z / mortonCellSize.z));
+
+    //マイナスを考慮した開始地点の座標を追加する
+    float3 startPlusRayMortonSpacePos = float3(
+        rayMortonForward.x== 1 ? startRayMortonSpacePosition.x : CalcInvertMortonSpacePosition(startRayMortonCellPos.x, mortonCellSize.x, startRayMortonSpacePosition.x),
+        rayMortonForward.y == 1? startRayMortonSpacePosition.y: CalcInvertMortonSpacePosition(startRayMortonCellPos.y, mortonCellSize.y, startRayMortonSpacePosition.y),
+        rayMortonForward.z == 1? startRayMortonSpacePosition.z: CalcInvertMortonSpacePosition(startRayMortonCellPos.z, mortonCellSize.z, startRayMortonSpacePosition.z));
+
+
+    //モートン空間の縦横高さは1,1,1とは限らず、スペースの大きさと分割数によって変化するため、計算しやすいように係数を調整して1,1,1として扱えるようにする
+    float3 mortonSpacePlusDirection = float3(plusDirection.x/ mortonCellSize.x, plusDirection.y/ mortonCellSize.y,plusDirection.z/ mortonCellSize.z);
+    //1ステップ進むごとに進むベクトル
+    float3 rayForwardOneStep = float3(mortonSpacePlusDirection.x* mortonCellSize.x,mortonSpacePlusDirection.y* mortonCellSize.y,mortonSpacePlusDirection.z* mortonCellSize.z);
+
+
+    int3 currentPlusMortonPosition = startRayMortonCellPos;
+    float3 currentPosition = startPlusRayMortonSpacePos;
+
+
+    int resultIndex = -1;
+
+
+    int calcCount = 0;
+
+    int3 oneInt3 = int3(1, 1, 1);
+
+    //空間の範囲を抜けるまで続ける
+    while (true)
+    {
+        //無限ループ防止のために計算回数を制限する
+        if (2 * mortonCellNum < calcCount)
+        {
+            break;
+        }
+        calcCount++;
+
+
+        //現在のレイの位置を計算する
+        int3 currentPlusMortonDifference = currentPlusMortonPosition - startRayMortonCellPos;
+        int3 currentMortonDifference = int3(currentPlusMortonDifference.x* rayMortonForward.x,currentPlusMortonDifference.y* rayMortonForward.y,currentPlusMortonDifference.z* rayMortonForward.z);
+        int3 currentSpace = startRayMortonCellPos + currentMortonDifference;
+
+        //最初から範囲外である可能性が高いので現在のセルが範囲内かチェックする
+        if (currentSpace.x < 0 || mortonSpaceRange.x <= currentSpace.x ||
+            currentSpace.y < 0 || mortonSpaceRange.y <= currentSpace.y ||
+            currentSpace.z < 0 || mortonSpaceRange.z <= currentSpace.z)
+        {
+            break;
+        }
+
+        
+        //空間番号を取得し、インデックスとする
+        int index = Calculateint3PositionToMortonIndex(currentSpace);
+
+        //当たり判定をする
+        resultIndex = OccluderCollisionCheck(index, occluderBoundingBox, startRayMortonSpacePosition, direction,occludeBoundingBox, occludeResult,threadIndex);
+        if (resultIndex != -1)
+        {
+            break;
+        }
+
+
+        //次のセルがどれかを計算する
+
+        //次のセル
+        int3 nextMortonCell = currentPlusMortonPosition + oneInt3;
+        //次セルの座標
+        float3 nextPosition = float3(nextMortonCell.x* mortonCellSize.x, nextMortonCell.y* mortonCellSize.y,nextMortonCell.z* mortonCellSize.z);
+
+        //現在の座標から次のセルの座標までのベクトルを求め、rayとのベクトルで割ることで、次のセルまでのベクトルととrayがどれくらい離れているかを求める
+        //ある方向がもう一つの方向より小さかった時にその方向に進むというアルゴリズムであるため、rayの方向が0の場合は無限大として扱う
+        float3 nextMortonCellRayRatio = float3(
+        mortonSpacePlusDirection.x!= 0 ? abs ((nextPosition.x- currentPosition.x)/rayForwardOneStep.x):10000000.0f,
+        mortonSpacePlusDirection.y != 0? abs((nextPosition.y - currentPosition.y) / rayForwardOneStep.y): 10000000.0f,
+        mortonSpacePlusDirection.z != 0? abs((nextPosition.z - currentPosition.z) / rayForwardOneStep.z): 10000000.0f);
+
+        //各軸の大小を比べてどっち方向に動くかを決定する
+        if (nextMortonCellRayRatio.x < nextMortonCellRayRatio.y && nextMortonCellRayRatio.x < nextMortonCellRayRatio.z)
+        {
+            currentPosition += rayForwardOneStep * nextMortonCellRayRatio.x;
+            currentPlusMortonPosition.x += 1;
+        }
+        else if (nextMortonCellRayRatio.y < nextMortonCellRayRatio.x && nextMortonCellRayRatio.y <nextMortonCellRayRatio.z)
+        {
+            currentPosition += rayForwardOneStep * nextMortonCellRayRatio.y;
+            currentPlusMortonPosition.y += 1;
+        }
+        else
+        {
+            currentPosition += rayForwardOneStep * nextMortonCellRayRatio.z;
+            currentPlusMortonPosition.z += 1;
+        }
+    }
+
+
+    return resultIndex;
+}
+
+//チェックモードに関する定数
+#define RESET_RESULT_ARRAY 0
+#define CHECK_RAY_MODE 1
+#define PACK_RESULT_HIT 2
+
+
+#define MAX_GROUP_X_NUM 100
+#define MAX_GROUP_Y_NUM 5
+#define MAX_THREAD_NUM 100
+
+RWStructuredBuffer<int> OccluderHitResult;
+int occluderCount;
+#define MAX_PACKED_NUM 300
+RWStructuredBuffer<int> PackedRayIndex;
+RWStructuredBuffer<int> OccludeeHitResult;
+int occludeeCount;
+
+RWStructuredBuffer<float4> OccluderBoundingBox;
+RWStructuredBuffer<float4> OccludeeBoundingBox;
+
+
+//ここから
+float3 cameraRadianRotation;
+float verticalRadianFov;
+float horizontalRadianFov;
+float3 cameraPosition;
+//ここまで カメラの中心からレイを飛ばすために必要な情報
+
+//ここから
+float3 upPosOffset;
+float3 rightPosOffset;
+float3 downPosOffset;
+float3 leftPosOffset;
+//ここまで　カメラの4方向に少しづらしてレイを飛ばすための譲歩
+
+float3 spaceOriginPosition;
+float3 spaceRange;
+int spaceSplitNum;
+
+int checkMode;
+
+void Mode1CheckRay(int x,int y,int maxY,int cameraIndex,int threadIndex)
+{
+    //カメラの中心からの計算すべき列の角度を求める
+    const float3 viewFrustumOriginAngle = cameraRadianRotation - float3(verticalRadianFov * 0.5f, horizontalRadianFov * 0.5f, 0.0f);
+    const float3 checkAngle = viewFrustumOriginAngle + float3(verticalRadianFov / maxY * y, horizontalRadianFov / MAX_GROUP_X_NUM * x, 0.0f);
+
+    //角度をベクトルに変換する
+    //なんかxは反転するので-1掛けておく
+    const float3 checkDirection = float3(sin(checkAngle.y) * cos(checkAngle.x), sin(checkAngle.x) * -1, cos(checkAngle.y) * cos(checkAngle.x));
+
+    float3 cameraPosOffset = float3(0,0,0);
+    if (cameraIndex == 1)
+    {
+        cameraPosOffset = upPosOffset;
+    }
+    else if (cameraIndex == 2)
+    {
+        cameraPosOffset = rightPosOffset;
+    }
+    else if (cameraIndex == 3)
+    {
+        cameraPosOffset = downPosOffset;
+    }
+    else if (cameraIndex == 4)
+    {
+        cameraPosOffset = leftPosOffset;
+    }
+    
+    //Rayの通り道を通って衝突判定をする
+    DebugData[threadIndex] = matrix(float4(-1,-1,-1,-1),float4(-1,-1,-1,-1),float4(-1,-1,-1,-1),float4(-1,-1,-1,-1));
+    const int hitIndex = GetHitIndex(cameraPosition + cameraPosOffset, checkDirection, spaceOriginPosition, spaceRange, spaceSplitNum,OccluderBoundingBox,OccludeeBoundingBox,OccludeeHitResult,threadIndex);
+    DebugData[threadIndex] = matrix(
+        float4(DebugData[threadIndex]._m00,DebugData[threadIndex]._m01,DebugData[threadIndex]._m02,DebugData[threadIndex]._m03),
+        float4(cameraPosition + cameraPosOffset,0),
+        float4(checkDirection,DebugData[threadIndex]._m23),
+        float4(DebugData[threadIndex]._m30,DebugData[threadIndex]._m31,DebugData[threadIndex]._m32,DebugData[threadIndex]._m33)
+    );
+
+    if (hitIndex != -1)
+    {
+        OccluderHitResult[hitIndex] = 1;
+    }
+}
+
+
+void Mode3PackResultHitIndex(int resultIndex)
+{
+    if (occluderCount <= resultIndex)
+    {
+        return;   
+    }
+    if(OccluderHitResult[resultIndex] == 0)
+    {
+        return;
+    }
+    int count = 0;
+    bool isMax = true;
+    for (int i = 0; i < occluderCount; i++)
+    {
+        //-1を詰めた時にどのインデックスになるかをチェックする
+        if (i < resultIndex && OccluderHitResult[i] == 1)
+        {
+            count++;
+        }
+        //自分のインデックスより後に-1じゃない値があるかをチェックし、自分が最大値かどうかをチェックする
+        if (resultIndex < i && OccluderHitResult[i] == 1)
+        {
+            isMax = false;
+            break;
+        }
+    }
+    //オフにする個数は300個以下とする
+    if (count < MAX_PACKED_NUM)
+    {
+        PackedRayIndex[count] = resultIndex;
+    }
+    //自分が最大値だった時に、自分より最後の値を-1にする
+    if (!isMax) return;
+
+    for (int i = count + 1; i < MAX_PACKED_NUM; i++)
+    {
+        PackedRayIndex[i] = -1;
+    }
+}
+
+//第一段階、レイを飛ばして当たったオブジェクトを求める
+[numthreads(MAX_THREAD_NUM,1,1)]
+void BoundingBoxRayChecker(uint3 groupId : SV_GroupID, uint3 threadId : SV_GroupThreadID,uint3 dispatchThreadID :SV_DispatchThreadID)
+{
+    const uint x = groupId.x;
+    const uint y = threadId.x;
+
+    const uint maxY = MAX_THREAD_NUM;
+    
+    const int resultIndex = x * maxY + y;
+
+
+    if (checkMode == RESET_RESULT_ARRAY)
+    {
+        //配列のリセットをする
+        //この場合スレッド数よりもオブジェクトが上回らなくなるとそれ以上のオブジェクトがリセットされないが、一旦それは無視
+        if (resultIndex < occludeeCount)
+        {
+            OccludeeHitResult[resultIndex] = 0;
+        }
+        if (resultIndex < occluderCount)
+        {
+            OccluderHitResult[resultIndex] = 0;
+        }
+    }
+    else if (checkMode == CHECK_RAY_MODE)
+    {
+        const uint cameraIndex = groupId.y;
+        
+        const uint dispatchedMaxY = MAX_GROUP_Y_NUM;
+        const uint dispatchedThreadIndex = dispatchThreadID.x * dispatchedMaxY + dispatchThreadID.y; 
+        
+        Mode1CheckRay(x,y,maxY,cameraIndex, dispatchedThreadIndex);
+    }
+    else if (checkMode == PACK_RESULT_HIT)
+    {
+        Mode3PackResultHitIndex(resultIndex);
+    }
+}

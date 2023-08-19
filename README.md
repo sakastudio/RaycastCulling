@@ -22,3 +22,6 @@ CPU側でComputeShaderに命令を出すクラス
 
 [OcclusionCulling.cs](https://github.com/sakastudio/RaycastCulling/blob/master/Assets/RaycastCulling/Script/OcclusionCulling.cs)
 
+でもシーンでオクルージョンカリングの設定を行うクラス
+
+[CullingInitializer](https://github.com/sakastudio/RaycastCulling/blob/master/Assets/Script/CullingInitializer.cs)

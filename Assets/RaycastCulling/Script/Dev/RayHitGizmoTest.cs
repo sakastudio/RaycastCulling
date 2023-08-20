@@ -7,10 +7,14 @@ namespace RaycastCulling.Script.Dev
 {
     public class RayHitGizmoTest : MonoBehaviour
     {
-        [SerializeField] private OcclusionCulling culling;
         [SerializeField] private OcclusionCullingSettings settings;
         [SerializeField] private int spaceSplitNum;
         [SerializeField] private Transform rayStart;
+        
+        [SerializeField] private List<MeshRenderer> occluders;
+        [SerializeField] private List<MeshRenderer> occludees;
+        
+        
 
         [SerializeField] private bool レイとヒットしたボックスを表示;
         [SerializeField] private bool レイを表示;
@@ -31,11 +35,28 @@ namespace RaycastCulling.Script.Dev
                 return;
             }
 
-            if (occluderList == null)
+            //イニシャライズ
             {
-                var mortonOccluderList = CalculateMortonOrder.CalculateMortonOrderList(culling.Occluder, settings.SpaceRange, spaceSplitNum);
+                var occluderResult = new List<BoundingBoxToMeshRenderer>();
+                foreach (var occluder in occluders)
+                {
+                    var min = occluder.bounds.min - settings.SpaceOriginPos;
+                    var max = occluder.bounds.max - settings.SpaceOriginPos;
+                    occluderResult.Add(new BoundingBoxToMeshRenderer(min, max, occluder));
+                }
+            
+                //OcclusionCullingの処理対象になるオブジェクトのバウンディングボックスを取得する
+                var occludeResult = new List<BoundingBoxToMeshRenderer>();
+                foreach (var occludee in occludees)
+                {
+                    var min = occludee.bounds.min - settings.SpaceOriginPos;
+                    var max = occludee.bounds.max - settings.SpaceOriginPos;
+                    occludeResult.Add(new BoundingBoxToMeshRenderer(min, max, occludee));
+                }
+                
+                var mortonOccluderList = CalculateMortonOrder.CalculateMortonOrderList(occluderResult.ToArray(), settings.SpaceRange, spaceSplitNum);
                 (occluderList,occluderListIndexToMeshRenderer) = ConvertBoundingBoxList.Convert2DListTo1DList(mortonOccluderList);
-                var mortonOccludeList = CalculateMortonOrder.CalculateMortonOrderList(culling.Occludee, settings.SpaceRange, spaceSplitNum);
+                var mortonOccludeList = CalculateMortonOrder.CalculateMortonOrderList(occludeResult.ToArray(), settings.SpaceRange, spaceSplitNum);
                 (occludeList,occludeListIndexToMeshRenderer) = ConvertBoundingBoxList.Convert2DListTo1DList(mortonOccludeList);
                 occludeHitReslut = new int[occludeList.Length];
             }
@@ -61,7 +82,7 @@ namespace RaycastCulling.Script.Dev
             {
                 if (hitIndex != -1)
                 {
-                    DrawBoundingBox(settings.SpaceOriginPos, DevelopmentCullingSystem.HitMinBoundingBox,DevelopmentCullingSystem.HitMaxBoundingBox);
+                    DrawBoundingBox(occluderListIndexToMeshRenderer[hitIndex]);
                 }
             }
             if (ヒットしたOccludeを表示)
@@ -70,7 +91,7 @@ namespace RaycastCulling.Script.Dev
                 {
                     if (occludeHitReslut[i] == 0) continue;
                     var box = occludeListIndexToMeshRenderer[i]; 
-                    DrawBoundingBox(settings.SpaceOriginPos, box.BoundMinPos, box.BoundMaxPos);
+                    DrawBoundingBox(box);
                 }
             }
 
@@ -100,6 +121,11 @@ namespace RaycastCulling.Script.Dev
             }
         }
 
+            
+        private static void DrawBoundingBox(BoundingBoxToMeshRenderer box)
+        {
+            DrawBoundingBox(Vector3.zero, box.Target.bounds.min,box.Target.bounds.max);
+        }
 
         private static void DrawBoundingBox(Vector3 spaceOriginPos,Vector3 min,Vector3 max)
         {

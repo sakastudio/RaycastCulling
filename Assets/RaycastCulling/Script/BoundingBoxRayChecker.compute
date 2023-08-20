@@ -1,4 +1,4 @@
-#pragma kernel BoundingBoxRayChecker
+#pragma kernel RaycastCulling 
 
 RWStructuredBuffer<matrix> DebugData;
 RWStructuredBuffer<int> IgnoreOccluderIndex;
@@ -332,7 +332,7 @@ int spaceSplitNum;
 
 int checkMode;
 
-void Mode1CheckRay(int x,int y,int maxY,int cameraIndex,int threadIndex)
+void Mode2CheckRay(int x,int y,int maxY,int cameraIndex,int threadIndex)
 {
     //カメラの中心からの計算すべき列の角度を求める
     const float3 viewFrustumOriginAngle = cameraRadianRotation - float3(verticalRadianFov * 0.5f, horizontalRadianFov * 0.5f, 0.0f);
@@ -417,9 +417,8 @@ void Mode3PackResultHitIndex(int resultIndex)
     }
 }
 
-//第一段階、レイを飛ばして当たったオブジェクトを求める
 [numthreads(MAX_THREAD_NUM,1,1)]
-void BoundingBoxRayChecker(uint3 groupId : SV_GroupID, uint3 threadId : SV_GroupThreadID,uint3 dispatchThreadID :SV_DispatchThreadID)
+void RaycastCulling(uint3 groupId : SV_GroupID, uint3 threadId : SV_GroupThreadID,uint3 dispatchThreadID :SV_DispatchThreadID)
 {
     const uint x = groupId.x;
     const uint y = threadId.x;
@@ -432,7 +431,6 @@ void BoundingBoxRayChecker(uint3 groupId : SV_GroupID, uint3 threadId : SV_Group
     if (checkMode == RESET_RESULT_ARRAY)
     {
         //配列のリセットをする
-        //この場合スレッド数よりもオブジェクトが上回らなくなるとそれ以上のオブジェクトがリセットされないが、一旦それは無視
         if (resultIndex < occludeeCount)
         {
             OccludeeHitResult[resultIndex] = 0;
@@ -449,7 +447,7 @@ void BoundingBoxRayChecker(uint3 groupId : SV_GroupID, uint3 threadId : SV_Group
         const uint dispatchedMaxY = MAX_GROUP_Y_NUM;
         const uint dispatchedThreadIndex = dispatchThreadID.x * dispatchedMaxY + dispatchThreadID.y; 
         
-        Mode1CheckRay(x,y,maxY,cameraIndex, dispatchedThreadIndex);
+        Mode2CheckRay(x,y,maxY,cameraIndex, dispatchedThreadIndex);
     }
     else if (checkMode == PACK_RESULT_HIT)
     {

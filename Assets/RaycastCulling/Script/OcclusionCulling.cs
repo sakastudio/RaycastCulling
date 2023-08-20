@@ -13,6 +13,10 @@ namespace RaycastCulling.Script
         private const int ResetResultArray = 0;
         private const int CheckRayMode = 1;
         private const int PackResultArray = 2;
+
+        private const int ResetResultArrayKernelIndex = 0;
+        private const int CheckRayModeKernelIndex = 1;
+        private const int PackResultArrayKernelIndex = 2;
         
         private const int GroupSize = 100;
         private const int GroupCameraNum = 5;
@@ -34,7 +38,7 @@ namespace RaycastCulling.Script
         public bool ヒットしなかったレイを描画する = false;
         public float ヒットしなかったレイの長さ = 100;
         
-        [SerializeField] private ComputeShader BoundingboxRayChecker;
+        [SerializeField] private ComputeShader raycastCullingComputeShader;
         
         [Header("カメラの周囲から出すレイの距離")]
         [SerializeField] private float AroundCheckDistance = 1.0f;
@@ -45,7 +49,7 @@ namespace RaycastCulling.Script
         
         private ComputeBuffer _occluderResultBuffer;
         private ComputeBuffer _occludeeResultBuffer;
-        private ComputeBuffer _packedResultBuffer;
+        private ComputeBuffer _packedOccluderResultBuffer;
         
         private ComputeBuffer _ignoreOccluderIndexBuffer;
         
@@ -77,7 +81,7 @@ namespace RaycastCulling.Script
             _occluderBoundingBox.AddTo(ct);
             _occludeeBoundingBox.AddTo(ct);
             _occluderResultBuffer.AddTo(ct);
-            _packedResultBuffer.AddTo(ct);
+            _packedOccluderResultBuffer.AddTo(ct);
             _occludeeResultBuffer.AddTo(ct);
             _ignoreOccluderIndexBuffer.AddTo(ct);
 
@@ -85,47 +89,47 @@ namespace RaycastCulling.Script
             #region カリングする側 Occluderの設定
             SetOcclusionCullingData(out _occluderResult, out _occluderBoundingBox,
                 _occluderResult, _settings.SpaceRange, _settings.SpaceSplitNum);
-            BoundingboxRayChecker.SetBuffer(0, "OccluderBoundingBox", _occluderBoundingBox);
-            BoundingboxRayChecker.SetInt("occluderCount", _occluderResult.Length);
+            raycastCullingComputeShader.SetBuffer(0, "OccluderBoundingBox", _occluderBoundingBox);
+            raycastCullingComputeShader.SetInt("occluderCount", _occluderResult.Length);
 
             _occluderResultBuffer = new ComputeBuffer(_occluderResult.Length, Marshal.SizeOf<int>());
-            BoundingboxRayChecker.SetBuffer(0, "OccluderHitResult", _occluderResultBuffer);
+            raycastCullingComputeShader.SetBuffer(0, "OccluderHitResult", _occluderResultBuffer);
             
             _ignoreOccluderIndexBuffer = new ComputeBuffer(IgnoreOccluderCount, Marshal.SizeOf<int>());
-            BoundingboxRayChecker.SetBuffer(0,"IgnoreOccluderIndex",_ignoreOccluderIndexBuffer);
-            BoundingboxRayChecker.SetInt("ignoreOccluderCount",IgnoreOccluderCount);
+            raycastCullingComputeShader.SetBuffer(0,"IgnoreOccluderIndex",_ignoreOccluderIndexBuffer);
+            raycastCullingComputeShader.SetInt("ignoreOccluderCount",IgnoreOccluderCount);
             #endregion
 
             #region カリングされる側 Occludeeの設定
             SetOcclusionCullingData(out _occludeeResult, out _occludeeBoundingBox,
                 _occludeeResult, _settings.SpaceRange, _settings.SpaceSplitNum);
-            BoundingboxRayChecker.SetBuffer(0, "OccludeeBoundingBox", _occludeeBoundingBox);
-            BoundingboxRayChecker.SetInt("occludeeCount", _occludeeResult.Length);
+            raycastCullingComputeShader.SetBuffer(0, "OccludeeBoundingBox", _occludeeBoundingBox);
+            raycastCullingComputeShader.SetInt("occludeeCount", _occludeeResult.Length);
 
             //occludeeが0個のときにエラーが出るので、0個のときは1個にしておく
             var occludeCount = _occludeeResult.Length;
             _occludeeResultBuffer = new ComputeBuffer(occludeCount == 0 ? 1 : occludeCount, Marshal.SizeOf<int>());
-            BoundingboxRayChecker.SetBuffer(0, "OccludeeHitResult", _occludeeResultBuffer);
+            raycastCullingComputeShader.SetBuffer(0, "OccludeeHitResult", _occludeeResultBuffer);
             #endregion
 
 
 
             //compute shaderに渡す
 
-            _packedResultBuffer = new ComputeBuffer(PackedResultIndex, Marshal.SizeOf<int>());
-            BoundingboxRayChecker.SetBuffer(0, "PackedRayIndex", _packedResultBuffer);
+            _packedOccluderResultBuffer = new ComputeBuffer(PackedResultIndex, Marshal.SizeOf<int>());
+            raycastCullingComputeShader.SetBuffer(0, "PackedRayIndex", _packedOccluderResultBuffer);
 
 
 
 
-            BoundingboxRayChecker.SetVector("spaceOriginPosition", _settings.SpaceOriginPos);
-            BoundingboxRayChecker.SetVector("spaceRange", _settings.SpaceRange);
-            BoundingboxRayChecker.SetInt("spaceSplitNum", _settings.SpaceSplitNum);
+            raycastCullingComputeShader.SetVector("spaceOriginPosition", _settings.SpaceOriginPos);
+            raycastCullingComputeShader.SetVector("spaceRange", _settings.SpaceRange);
+            raycastCullingComputeShader.SetInt("spaceSplitNum", _settings.SpaceSplitNum);
 
 
 
             _debugBuffer = new ComputeBuffer(ResultArraySize,  Marshal.SizeOf<Matrix4x4>());
-            BoundingboxRayChecker.SetBuffer(0, "DebugData", _debugBuffer);
+            raycastCullingComputeShader.SetBuffer(0, "DebugData", _debugBuffer);
             Enable = true;
         }
 
@@ -143,16 +147,16 @@ namespace RaycastCulling.Script
             SetCameraRayData(camera,cameraTransform);
             SetAroundRayData(cameraTransform);
             
-            BoundingboxRayChecker.SetInt(CheckMode,ResetResultArray);
-            BoundingboxRayChecker.Dispatch(0, ThreadGroupSize.x, ThreadGroupSize.y, ThreadGroupSize.z);
+            raycastCullingComputeShader.SetInt(CheckMode,ResetResultArray);
+            raycastCullingComputeShader.Dispatch(0, ThreadGroupSize.x, ThreadGroupSize.y, ThreadGroupSize.z);
             
-            BoundingboxRayChecker.SetInt(CheckMode,CheckRayMode);
-            BoundingboxRayChecker.Dispatch(0, ThreadGroupSize.x, ThreadGroupSize.y, ThreadGroupSize.z);
+            raycastCullingComputeShader.SetInt(CheckMode,CheckRayMode);
+            raycastCullingComputeShader.Dispatch(0, ThreadGroupSize.x, ThreadGroupSize.y, ThreadGroupSize.z);
             
-            BoundingboxRayChecker.SetInt(CheckMode,PackResultArray);
-            BoundingboxRayChecker.Dispatch(0, ThreadGroupSize.x, ThreadGroupSize.y, ThreadGroupSize.z);
+            raycastCullingComputeShader.SetInt(CheckMode,PackResultArray);
+            raycastCullingComputeShader.Dispatch(0, ThreadGroupSize.x, ThreadGroupSize.y, ThreadGroupSize.z);
             
-            AsyncGPUReadback.Request(_packedResultBuffer, OccluderMeshOn);
+            AsyncGPUReadback.Request(_packedOccluderResultBuffer, OccluderMeshOn);
             if (_occludeeResult.Length != 0) 
             {
                 AsyncGPUReadback.Request(_occludeeResultBuffer, OccludeeMeshOn);
@@ -209,25 +213,25 @@ namespace RaycastCulling.Script
             var position = cameraTransform.position;
             var rotation = cameraTransform.rotation;
             
-            BoundingboxRayChecker.SetVector("cameraRadianRotation",rotation.eulerAngles * Mathf.Deg2Rad);
-            BoundingboxRayChecker.SetFloat("verticalRadianFov",targetCamera.fieldOfView * Mathf.Deg2Rad + 30 * Mathf.Deg2Rad); //縦横それぞれのFOVに30度ずつ余裕を持たせることで、カメラぎりぎりのところにあるオブジェクトを描画することができる
-            BoundingboxRayChecker.SetFloat("horizontalRadianFov",VFovToHFov(targetCamera.fieldOfView,targetCamera.aspect) * Mathf.Deg2Rad + 30 * Mathf.Deg2Rad);
-            BoundingboxRayChecker.SetFloat("aspectRatio",targetCamera.aspect);
-            BoundingboxRayChecker.SetVector("cameraPosition",position);
+            raycastCullingComputeShader.SetVector("cameraRadianRotation",rotation.eulerAngles * Mathf.Deg2Rad);
+            raycastCullingComputeShader.SetFloat("verticalRadianFov",targetCamera.fieldOfView * Mathf.Deg2Rad + 30 * Mathf.Deg2Rad); //縦横それぞれのFOVに30度ずつ余裕を持たせることで、カメラぎりぎりのところにあるオブジェクトを描画することができる
+            raycastCullingComputeShader.SetFloat("horizontalRadianFov",VFovToHFov(targetCamera.fieldOfView,targetCamera.aspect) * Mathf.Deg2Rad + 30 * Mathf.Deg2Rad);
+            raycastCullingComputeShader.SetFloat("aspectRatio",targetCamera.aspect);
+            raycastCullingComputeShader.SetVector("cameraPosition",position);
         }
 
         private void SetAroundRayData(Transform cameraTransform)
         {
             //20cm上の座標を求める
             var up = cameraTransform.up;
-            BoundingboxRayChecker.SetVector("upPosOffset",up * AroundCheckDistance);
+            raycastCullingComputeShader.SetVector("upPosOffset",up * AroundCheckDistance);
 
             var right = cameraTransform.right;
-            BoundingboxRayChecker.SetVector("rightPosOffset",right * AroundCheckDistance);
+            raycastCullingComputeShader.SetVector("rightPosOffset",right * AroundCheckDistance);
             
-            BoundingboxRayChecker.SetVector("downPosOffset",up * -AroundCheckDistance);
+            raycastCullingComputeShader.SetVector("downPosOffset",up * -AroundCheckDistance);
             
-            BoundingboxRayChecker.SetVector("leftPosOffset",right * -AroundCheckDistance);
+            raycastCullingComputeShader.SetVector("leftPosOffset",right * -AroundCheckDistance);
         }
         
         #endregion
@@ -261,11 +265,13 @@ namespace RaycastCulling.Script
         {
             if (meshOnResult.hasError) return;
 
+            //一旦すべてのMeshRendererを非表示にする
             foreach (var occluder in _occluderResult)
             {
                 occluder.SetForceRenderingOff(true);
             }
             
+            //レイがヒットしたものだけ表示する
             using var rayHits = meshOnResult.GetData<int>();
             var length = rayHits.Length;
             for (var i = 0; i < length; i++)
@@ -298,19 +304,6 @@ namespace RaycastCulling.Script
             }
         }
 
-
-        
-        public void AllMeshOn()
-        {
-            foreach (var meshRenderer in _occluderResult)
-            {
-                meshRenderer.SetForceRenderingOff(false);
-            }
-            foreach (var meshRenderer in _occludeeResult)
-            {
-                meshRenderer.SetForceRenderingOff(false);
-            }
-        }
 
         private static float VFovToHFov(float verticalFov, float aspectRatio)
         {

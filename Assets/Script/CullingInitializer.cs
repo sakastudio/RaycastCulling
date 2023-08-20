@@ -21,6 +21,7 @@ namespace Script
                 occluderResult.Add(new BoundingBoxToMeshRenderer(min, max, occluder));
             }
             
+            //OcclusionCullingの処理対象になるオブジェクトのバウンディングボックスを取得する
             var occludeResult = new List<BoundingBoxToMeshRenderer>();
             foreach (var occludee in occludees)
             {
@@ -29,6 +30,7 @@ namespace Script
                 occludeResult.Add(new BoundingBoxToMeshRenderer(min, max, occludee));
             }
 
+            //OcclusionCullingを初期化する
             occlusionCulling.Initialize(occluderResult.ToArray(), occludeResult.ToArray(),settings);
 
         }

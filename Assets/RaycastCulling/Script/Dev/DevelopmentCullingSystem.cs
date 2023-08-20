@@ -4,6 +4,10 @@ using UnityEngine;
 
 namespace RaycastCulling.Script.Dev
 {
+    /// <summary>
+    /// ComputeShaderに移す前の開発用のCullingSystem
+    /// ここでいい感じになったらComputeShaderのほうにコピペする
+    /// </summary>
     public static class DevelopmentCullingSystem
     {
         static Vector3 IsCollision(Vector3 rayDir,Vector3 rayFromPos,Vector3 aabbLeftPos,Vector3 aabbRightPos)

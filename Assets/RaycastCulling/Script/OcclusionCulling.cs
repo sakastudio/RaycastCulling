@@ -14,9 +14,6 @@ namespace RaycastCulling.Script
         private const int CheckRayMode = 1;
         private const int PackResultArray = 2;
 
-        private const int ResetResultArrayKernelIndex = 0;
-        private const int CheckRayModeKernelIndex = 1;
-        private const int PackResultArrayKernelIndex = 2;
         
         private const int GroupSize = 100;
         private const int GroupCameraNum = 5;

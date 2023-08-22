@@ -310,7 +310,8 @@ namespace RaycastCulling.Script
         private static void SetOcclusionCullingData(out BoundingBoxToMeshRenderer[] resultTargetList,out ComputeBuffer resultComputeBuffer, 
             BoundingBoxToMeshRenderer[] boundingBoxList, Vector3 spaceRange, int spaceSplitNum)
         {
-            var (occluderBoundingBox, occlusionList) = ConvertBoundingBoxList.Convert2DListTo1DList(
+            var (occluderBoundingBox, occlusionList) = 
+                ConvertBoundingBoxList.Convert2DListTo1DList(
                 CalculateMortonOrder.CalculateMortonOrderList(boundingBoxList, spaceRange, spaceSplitNum));
             
             resultTargetList = occlusionList;

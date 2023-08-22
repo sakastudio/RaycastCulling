@@ -63,7 +63,7 @@ float3 IsCollision(float3 rayDir, float3 rayFromPos, float3 aabbLeftPos, float3 
     return rayFromPos + rayDir * tMin;
 }
 
-void OccludeCollisionCheck(int spaceIndex, float occluderHitSqrMagnitude,RWStructuredBuffer<float4> occludeBoundingBox, RWStructuredBuffer<int> occludeResult,float3 startRayMortonSpacePosition, float3 rayDirection)
+void OccludeeCollisionCheck(int spaceIndex, float occluderHitSqrMagnitude,RWStructuredBuffer<float4> occludeBoundingBox, RWStructuredBuffer<int> occludeResult,float3 startRayMortonSpacePosition, float3 rayDirection)
 {
     int startIndex = (int)occludeBoundingBox[spaceIndex].y;
     int spaceVoxelCount = (int)occludeBoundingBox[spaceIndex].z;
@@ -149,7 +149,7 @@ int OccluderCollisionCheck(int spaceIndex, RWStructuredBuffer<float4> occluderBo
     }
 
     //Occluderの判定結果をもとにOccludeの判定を行う
-    OccludeCollisionCheck(spaceIndex, minCenterSqrMagnitude, occludeBoundingBox, occludeResult,startRayMortonSpacePosition, rayDirection);
+    OccludeeCollisionCheck(spaceIndex, minCenterSqrMagnitude, occludeBoundingBox, occludeResult,startRayMortonSpacePosition, rayDirection);
 
     return resultIndex;
 }

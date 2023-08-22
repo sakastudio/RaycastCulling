@@ -1,6 +1,7 @@
 # RaycastCulling
 
-レイベースのオクルージョンカリングシステムです。
+[CEDEC2023で発表](https://cedec.cesa.or.jp/2023/session/detail/s6427c6d132f85)したUnityのレイベースのオクルージョンカリングシステムです。
+
 
 # デモ
 
